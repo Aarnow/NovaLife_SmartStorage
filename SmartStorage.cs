@@ -1,4 +1,5 @@
 ﻿using Life;
+using Life.DB;
 using Life.InventorySystem;
 using Life.Network;
 using Life.UI;
@@ -39,21 +40,30 @@ namespace SmartStorage
 
         public void InsertMenu()
         {
-            _menu.AddProximityTabLine(PluginInformations, 1237, "", (ui) =>
+            _menu.AddProximityTabLine(PluginInformations, 1237, "Grand casier", async (ui) =>
             {
                 Player player = PanelHelper.ReturnPlayerFromPanel(ui);
-                if (player.HasBiz() && player.setup.areaId == player.biz.TerrainId) OpenLargeLocker(player);
-                else player.Notify("SmartStorage", "Vous devez êtes membre de la société possèdant ce grand casier", NotificationManager.Type.Info);
-            });
+
+                Bizs currentBiz = await LifeDB.db.Table<Bizs>().Where(b => b.TerrainId == player.setup.areaId).FirstOrDefaultAsync();
+
+                if (currentBiz != null && currentBiz != default && currentBiz.TerrainId != default)
+                {
+                    if ((player.HasBiz() && player.biz.Id == currentBiz.Id) ||
+                    (DateUtils.IsCurrentTimeBetween(IllegalStart, IllegalEnd) && player.setup.characterSkinData.Accessory == OutlawMaskId) ||
+                    (player.IsAdmin && player.serviceAdmin)) OpenLargeLocker(player, currentBiz);
+                    else player.Notify("SmartStorage", "Grand casier inaccessible", NotificationManager.Type.Info);
+                }
+                else player.Notify("SmartStorage", "Ce grand casier n'est pas intéressant", NotificationManager.Type.Info);
+            }, 100);
         }
 
         #region LOCKER
-        public async void OpenLargeLocker(Player player)
+        public async void OpenLargeLocker(Player player, Bizs currentBiz)
         {
-            List<SmartStorage_Category> categories = await SmartStorage_Category.Query(c => player.biz.Id == c.BizId);
+            List<SmartStorage_Category> categories = await SmartStorage_Category.Query(c => currentBiz.Id == c.BizId);
 
             //Déclaration
-            Panel panel = PanelHelper.Create("Grand casier", UIPanel.PanelType.TabPrice, player, () => OpenLargeLocker(player));
+            Panel panel = PanelHelper.Create("Grand casier", UIPanel.PanelType.TabPrice, player, () => OpenLargeLocker(player, currentBiz));
 
             //Corps
             if (categories.Count > 0)
@@ -62,27 +72,54 @@ namespace SmartStorage
                 {
                     panel.AddTabLine($"{category.CategoryName}", $"{(category.IsBroken ? $"{mk.Color("forcé", mk.Colors.Error)}" : category.Password.Length > 0 ? $"{mk.Color("tiroir verrouillé", mk.Colors.Warning)}" : "")}", category.CategoryIcon, _ =>
                     {
-                        if (category.Password.Length > 0 && !category.IsBroken) OpenLargeLockerEnterCategoryPassword(player, category);
-                        else OpenLargeLockerCategoryContent(player, category);
+                        if (category.Password.Length > 0 && !category.IsBroken) LargeLockerEnterCategoryPassword(player, currentBiz, category);
+                        else LargeLockerCategoryContent(player, category);
                     });
                 }
             }
             else panel.AddTabLine("Aucune catégorie", _ => { });
 
             //Boutons
-            panel.NextButton("Sélectionner", () => panel.SelectTab());
-            panel.NextButton($"{mk.Size("Modifier une catégorie", 14)}", () => OpenLargeLockerManagement(player, categories[panel.selectedTab])); //modifier
-            panel.NextButton($"{mk.Size("Ajouter une catégorie", 14)}", () => OpenLargeLockerManagement(player)); //ajouter
-            //panel.NextButton("Historique", () => panel.SelectTab()); //consulter les logs
+            
+            if (player.IsAdmin && player.serviceAdmin)
+            {
+                panel.NextButton("Historique", () => LargeLockerLogs(player, currentBiz));
+            } else
+            {
+                panel.NextButton("Sélectionner", () => panel.SelectTab());
+                panel.NextButton($"{mk.Size("Modifier une catégorie", 14)}", () => LargeLockerManagement(player, currentBiz, categories[panel.selectedTab]));
+                panel.NextButton($"{mk.Size("Ajouter une catégorie", 14)}", () => LargeLockerManagement(player, currentBiz));
+            }
             panel.CloseButton();
 
             //Affichage
             panel.Display();
         }
-        public void OpenLargeLockerEnterCategoryPassword(Player player, SmartStorage_Category category)
+
+        public async void LargeLockerLogs(Player player, Bizs currentBiz)
+        {
+            List<SmartStorage_Logs> logs = await SmartStorage_Logs.Query(l => l.BizId == currentBiz.Id);
+
+            Panel panel = PanelHelper.Create($"Grand casier - Historique", UIPanel.PanelType.TabPrice, player, () => LargeLockerLogs(player, currentBiz));
+
+            foreach (var log in logs)
+            {
+                var currentItem = ItemUtils.GetItemById(log.ItemId);
+                panel.AddTabLine($"{mk.Color($"{(log.IsDeposit ? "DÉPÔT" : "RETRAIT")}", (log.IsDeposit ? mk.Colors.Success : mk.Colors.Orange))} par {mk.Color($"{log.CharacterFullName} [{log.CharacterId}]", mk.Colors.Info)}<br>" +
+                    $"{mk.Size($"{currentItem.itemName} x {mk.Color($"{log.Quantity}", mk.Colors.Warning)}", 14)}",
+                    $"{DateUtils.ConvertNumericalDateToString(log.CreatedAt)}",
+                    ItemUtils.GetIconIdByItemId(currentItem.id), _ => { });
+            }
+
+            panel.PreviousButton();
+            panel.CloseButton();
+
+            panel.Display();
+        }
+        public void LargeLockerEnterCategoryPassword(Player player, Bizs currentBiz, SmartStorage_Category category)
         {
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - Mot de passe", UIPanel.PanelType.Input, player, () => OpenLargeLockerEnterCategoryPassword(player, category));
+            Panel panel = PanelHelper.Create($"Grand casier - Mot de passe", UIPanel.PanelType.Input, player, () => LargeLockerEnterCategoryPassword(player, currentBiz, category));
 
             //Corps
             panel.TextLines.Add($"{category.CategoryName}");
@@ -95,7 +132,7 @@ namespace SmartStorage
                 {
                     if (category.Password == panel.inputText)
                     {
-                        OpenLargeLockerCategoryContent(player, category);
+                        LargeLockerCategoryContent(player, category);
                         return;
                     }
                     else player.Notify("SmartStorage", "Mot de passe incorrect", NotificationManager.Type.Error);                      
@@ -103,51 +140,52 @@ namespace SmartStorage
 
                 panel.Refresh();
             });
-            if (player.setup.characterSkinData.Accessory == OutlawMaskId)
+            panel.NextButton("Forcer", async () =>
             {
-                panel.NextButton("Forcer", async () =>
+                if (DateUtils.IsCurrentTimeBetween(IllegalStart, IllegalEnd) && player.setup.characterSkinData.Accessory == OutlawMaskId)
                 {
-                    if(InventoryUtils.CheckInventoryContainsItem(player, CrowbarId, CrowbarRequired))
+                    if (InventoryUtils.CheckInventoryContainsItem(player, CrowbarId, CrowbarRequired))
                     {
                         category.IsBroken = true;
                         if (await category.Save())
                         {
                             InventoryUtils.RemoveFromInventory(player, CrowbarId, CrowbarRequired);
-                            OpenLargeLockerCategoryContent(player, category);
+                            LargeLockerCategoryContent(player, category);
                             return;
                         }
-                        else player.Notify("SmartStorage", "Nous n'avons pas pu forcer ce grand casier", NotificationManager.Type.Error);
+                        else player.Notify("SmartStorage", "Nous n'avons pas pu forcer ce grand casier", NotificationManager.Type.Warning);
                     }
-                    else player.Notify("SmartStorage", $"Vous avez besoin de {CrowbarRequired} pied{(CrowbarRequired>1 ?"s":"")} de biche", NotificationManager.Type.Error);
-                    panel.Refresh();
-                });
-            }
+                    else player.Notify("SmartStorage", $"Vous avez besoin de {CrowbarRequired} pied{(CrowbarRequired > 1 ? "s" : "")} de biche", NotificationManager.Type.Warning);
+                }
+                else player.Notify("SmartStorage", $"Vous devez porter un masque et agir entre les heures d'hostilités ({IllegalStart}H - {IllegalEnd}H)", NotificationManager.Type.Warning);
+
+                panel.Refresh();
+            });
             panel.PreviousButton();
             panel.CloseButton();
 
             //Affichage
             panel.Display();
         }
-
-        public void OpenLargeLockerManagement(Player player, SmartStorage_Category category = null)
+        public void LargeLockerManagement(Player player, Bizs currentBiz, SmartStorage_Category category = null)
         {
             if(category == null)
             {
                 category = new SmartStorage_Category();
                 category.CategoryName = "Nouvelle catégorie";
                 category.CategoryIcon = IconUtils.Others.None.Id;
-                category.BizId = player.biz.Id;
+                category.BizId = currentBiz.Id;
                 category.IsBroken = false;
                 category.Password = "";
             }
 
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - Gestion catégorie", UIPanel.PanelType.TabPrice, player, () => OpenLargeLockerManagement(player, category));
+            Panel panel = PanelHelper.Create($"Grand casier - Gestion catégorie", UIPanel.PanelType.TabPrice, player, () => LargeLockerManagement(player, currentBiz, category));
 
             //Corps
-            panel.AddTabLine($"{mk.Color("Nom:", mk.Colors.Info)} {category.CategoryName}", _ => OpenLargeLockerSetCategoryName(player, category));
-            panel.AddTabLine($"{mk.Color("Icône:", mk.Colors.Info)} {category.CategoryIcon}", "", category.CategoryIcon, _ => OpenLargeLockerSetCategoryIcon(player, category));
-            panel.AddTabLine($"{mk.Color("Mot de passe:", mk.Colors.Info)} {(category.Password.Length > 0 ? $"{category.Password}": $"{mk.Color("aucun",mk.Colors.Orange)}")}", _ => OpenLargeLockerSetCategoryPassword(player, category));
+            panel.AddTabLine($"{mk.Color("Nom:", mk.Colors.Info)} {category.CategoryName}", _ => LargeLockerSetCategoryName(player, category));
+            panel.AddTabLine($"{mk.Color("Icône:", mk.Colors.Info)} {category.CategoryIcon}", "", category.CategoryIcon, _ => LargeLockerSetCategoryIcon(player, category));
+            panel.AddTabLine($"{mk.Color("Mot de passe:", mk.Colors.Info)} {(category.Password.Length > 0 ? $"{category.Password}": $"{mk.Color("aucun",mk.Colors.Orange)}")}", _ => LargeLockerSetCategoryPassword(player, category));
 
             //Boutons
             panel.NextButton("Sélectionner", () => panel.SelectTab());
@@ -184,10 +222,10 @@ namespace SmartStorage
         }
 
         #region SETTERS
-        public void OpenLargeLockerSetCategoryName(Player player, SmartStorage_Category category)
+        public void LargeLockerSetCategoryName(Player player, SmartStorage_Category category)
         {
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - Nom de la catégorie", UIPanel.PanelType.Input, player, () => OpenLargeLockerSetCategoryName(player, category));
+            Panel panel = PanelHelper.Create($"Grand casier - Nom de la catégorie", UIPanel.PanelType.Input, player, () => LargeLockerSetCategoryName(player, category));
 
             //Corps
             panel.TextLines.Add("Définir le nom de la catégorie");
@@ -223,10 +261,10 @@ namespace SmartStorage
             //Affichage
             panel.Display();
         }
-        public void OpenLargeLockerSetCategoryIcon(Player player, SmartStorage_Category category)
+        public void LargeLockerSetCategoryIcon(Player player, SmartStorage_Category category)
         {
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - Icône de la catégorie", UIPanel.PanelType.Input, player, () => OpenLargeLockerSetCategoryIcon(player, category));
+            Panel panel = PanelHelper.Create($"Grand casier - Icône de la catégorie", UIPanel.PanelType.Input, player, () => LargeLockerSetCategoryIcon(player, category));
 
             //Corps
             panel.TextLines.Add("Définir l'icône de la catégorie");
@@ -236,9 +274,9 @@ namespace SmartStorage
             //Boutons
             panel.PreviousButtonWithAction("Sauvegarder", async () =>
             {
-                if (int.TryParse(panel.inputText, out int iconId))
+                if (int.TryParse(panel.inputText, out int itemId))
                 {
-                    category.CategoryIcon = ItemUtils.GetIconIdByItemId(iconId);
+                    category.CategoryIcon = ItemUtils.GetIconIdByItemId(itemId);
 
                     if (await category.Save())
                     {
@@ -263,10 +301,10 @@ namespace SmartStorage
             //Affichage
             panel.Display();
         }
-        public void OpenLargeLockerSetCategoryPassword(Player player, SmartStorage_Category category)
+        public void LargeLockerSetCategoryPassword(Player player, SmartStorage_Category category)
         {
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - Mot de passe de la catégorie", UIPanel.PanelType.Input, player, () => OpenLargeLockerSetCategoryPassword(player, category));
+            Panel panel = PanelHelper.Create($"Grand casier - Mot de passe de la catégorie", UIPanel.PanelType.Input, player, () => LargeLockerSetCategoryPassword(player, category));
 
             //Corps
             panel.TextLines.Add("Définir un mot de passe pour accéder à la catégorie");
@@ -305,22 +343,22 @@ namespace SmartStorage
         }
         #endregion
 
-        public async void OpenLargeLockerCategoryContent(Player player, SmartStorage_Category category)
+        public async void LargeLockerCategoryContent(Player player, SmartStorage_Category category)
         {
-            List<SmartStorage_Item> items = await SmartStorage_Item.Query(i => i.BizId == category.BizId);
+            List<SmartStorage_Item> items = await SmartStorage_Item.Query(i => i.BizId == category.BizId && i.CategoryId == category.Id);
 
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - {category.CategoryName}", UIPanel.PanelType.TabPrice, player, () => OpenLargeLockerCategoryContent(player, category));
+            Panel panel = PanelHelper.Create($"Grand casier - {category.CategoryName}", UIPanel.PanelType.TabPrice, player, () => LargeLockerCategoryContent(player, category));
 
             //Corps
             foreach (var item in items)
             {
                 var currentItem = ItemUtils.GetItemById(item.ItemId);
-                panel.AddTabLine($"{currentItem.itemName}", $"{item.Quantity}", ItemUtils.GetIconIdByItemId(item.ItemId), _ => OpenLargeLockerWithdraw(player, item, currentItem));
+                panel.AddTabLine($"{currentItem.itemName}", $"{item.Quantity}", ItemUtils.GetIconIdByItemId(item.ItemId), _ => LargeLockerWithdraw(player, item, currentItem));
             }
 
             //Boutons
-            panel.NextButton("Déposer", () => OpenLargeLockerDeposit(player, category));
+            panel.NextButton("Déposer", () => LargeLockerDeposit(player, category));
             panel.NextButton("Retirer", () => panel.SelectTab());
             panel.PreviousButton();
             panel.CloseButton();
@@ -328,23 +366,13 @@ namespace SmartStorage
             //Affichage
             panel.Display();
         }
-
-        public void OpenLargeLockerDeposit(Player player, SmartStorage_Category category)
+        public void LargeLockerDeposit(Player player, SmartStorage_Category category)
         {
             //inventaire du joueur
-            Dictionary<int, int> playerInventory = new Dictionary<int, int>();
-
-            for (int i = 0; i < 12; i++)
-            {
-                if (playerInventory.ContainsKey(player.setup.inventory.items[i].itemId))
-                {
-                    playerInventory[player.setup.inventory.items[i].itemId] += player.setup.inventory.items[i].number;
-                }
-                else if (player.setup.inventory.items[i].itemId != 0) playerInventory.Add(player.setup.inventory.items[i].itemId, player.setup.inventory.items[i].number);
-            }
+            Dictionary<int, int> playerInventory = InventoryUtils.ReturnPlayerInventory(player);
 
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - Déposer dans \"{category.CategoryName}\"", UIPanel.PanelType.TabPrice, player, () => OpenLargeLockerDeposit(player, category));
+            Panel panel = PanelHelper.Create($"Grand casier - Déposer dans \"{category.CategoryName}\"", UIPanel.PanelType.TabPrice, player, () => LargeLockerDeposit(player, category));
 
             //Corps
             foreach ((var item, int index) in playerInventory.Select((item, index) => (item, index)))
@@ -352,7 +380,7 @@ namespace SmartStorage
                 Item currentItem = ItemUtils.GetItemById(item.Key);
                 panel.AddTabLine($"{currentItem.itemName}", $"Quantité: {item.Value}", ItemUtils.GetIconIdByItemId(currentItem.id), _ =>
                 {
-                    OpenLargeLockerDepositQuantity(player, category, currentItem, item.Value);
+                    LargeLockerDepositQuantity(player, category, currentItem, item.Value);
                 });
             }
 
@@ -364,10 +392,10 @@ namespace SmartStorage
             //Affichage
             panel.Display();
         }
-        public void OpenLargeLockerDepositQuantity(Player player, SmartStorage_Category category, Item item, int quantity)
+        public void LargeLockerDepositQuantity(Player player, SmartStorage_Category category, Item item, int quantity)
         {
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - Déposer {item.itemName} dans \"{category.CategoryName}\"", UIPanel.PanelType.Input, player, () => OpenLargeLockerDepositQuantity(player, category, item, quantity));
+            Panel panel = PanelHelper.Create($"Grand casier - Déposer {item.itemName} dans \"{category.CategoryName}\"", UIPanel.PanelType.Input, player, () => LargeLockerDepositQuantity(player, category, item, quantity));
 
             //Corps
             panel.TextLines.Add("Définir la quantité que vous souhaitez déposer");
@@ -403,6 +431,16 @@ namespace SmartStorage
                             if (await smartStorage_Item.Save())
                             {
                                 //LOGS
+                                SmartStorage_Logs newLog = new SmartStorage_Logs();
+                                newLog.BizId = smartStorage_Item.BizId;
+                                newLog.CharacterId = player.character.Id;
+                                newLog.CharacterFullName = player.GetFullName();
+                                newLog.ItemId = smartStorage_Item.ItemId;
+                                newLog.Quantity = smartStorage_Item.Quantity;
+                                newLog.IsDeposit = true;
+                                newLog.CreatedAt = DateUtils.GetNumericalDateOfTheDay();
+                                await newLog.Save();
+
                                 player.Notify("SmartStorage", $"Vous venez de déposer {qty} {item.itemName}", NotificationManager.Type.Success);
                                 return true;
                             }
@@ -437,11 +475,10 @@ namespace SmartStorage
             //Affichage
             panel.Display();
         }
-
-        public void OpenLargeLockerWithdraw(Player player, SmartStorage_Item smartStorage_Item, Item item)
+        public void LargeLockerWithdraw(Player player, SmartStorage_Item smartStorage_Item, Item item)
         {
             //Déclaration
-            Panel panel = PanelHelper.Create($"Grand casier - Retirer des {item.itemName}", UIPanel.PanelType.Input, player, () => OpenLargeLockerWithdraw(player, smartStorage_Item,item));
+            Panel panel = PanelHelper.Create($"Grand casier - Retirer des {item.itemName}", UIPanel.PanelType.Input, player, () => LargeLockerWithdraw(player, smartStorage_Item,item));
 
             //Corps
             panel.TextLines.Add("Définir la quantité que vous souhaitez retirer");
@@ -450,29 +487,41 @@ namespace SmartStorage
             //Boutons
             panel.PreviousButtonWithAction("Confirmer", async () =>
             {
-                if (int.TryParse(panel.inputText, out int qty))
+                if (int.TryParse(panel.inputText, out int value))
                 {
-                    if (qty > 0)
+                    if (value > 0)
                     {
-                        if (InventoryUtils.AddItem(player, smartStorage_Item.ItemId, smartStorage_Item.Quantity))
+                        int quantity = value > smartStorage_Item.Quantity ? smartStorage_Item.Quantity : value;
+                        if (InventoryUtils.AddItem(player, smartStorage_Item.ItemId, quantity))
                         {
-                            smartStorage_Item.Quantity -= qty;
+                            smartStorage_Item.Quantity -= quantity;
 
                             if (smartStorage_Item.Quantity > 0 ? await smartStorage_Item.Save() : await smartStorage_Item.Delete())
                             {
-                                player.Notify("SmartStorage", $"Vous venez de retirer {(smartStorage_Item.Quantity > 0 ? qty : smartStorage_Item.Quantity + qty)} {item.itemName}", NotificationManager.Type.Success);
+                                //LOGS
+                                SmartStorage_Logs newLog = new SmartStorage_Logs();
+                                newLog.BizId = smartStorage_Item.BizId;
+                                newLog.CharacterId = player.character.Id;
+                                newLog.CharacterFullName = player.GetFullName();
+                                newLog.ItemId = smartStorage_Item.ItemId;
+                                newLog.Quantity = quantity;
+                                newLog.IsDeposit = false;
+                                newLog.CreatedAt = DateUtils.GetNumericalDateOfTheDay();
+                                await newLog.Save();
+
+                                player.Notify("SmartStorage", $"Vous venez de retirer {quantity} {item.itemName}", NotificationManager.Type.Success);
                                 return true;
                             }
                             else
                             {
-                                InventoryUtils.RemoveFromInventory(player, smartStorage_Item.ItemId, qty);
+                                InventoryUtils.RemoveFromInventory(player, smartStorage_Item.ItemId, quantity);
                                 player.Notify("SmartStorage", $"Nous n'avons pas pu enregistrer votre dépôt", NotificationManager.Type.Error);
                                 return false;
                             }
                         }
                         else
                         {
-                            player.Notify("SmartStorage", $"Vous ne possédez pas suffisament de {item.itemName}", NotificationManager.Type.Warning);
+                            player.Notify("SmartStorage", $"Vous n'avez pas suffisament d'espace dans votre inventaire", NotificationManager.Type.Warning);
                             return false;
                         }
                     }
