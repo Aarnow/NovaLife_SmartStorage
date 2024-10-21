@@ -22,7 +22,7 @@ namespace SmartStorage
 
         public SmartStorage(IGameAPI api) : base(api)
         {
-            PluginInformations = new PluginInformations(AssemblyHelper.GetName(), "1.0.0", "Aarnow");
+            PluginInformations = new PluginInformations(AssemblyHelper.GetName(), "1.0.1", "Aarnow");
         }
 
         public override void OnPluginInit()
@@ -378,6 +378,23 @@ namespace SmartStorage
             foreach ((var item, int index) in playerInventory.Select((item, index) => (item, index)))
             {
                 Item currentItem = ItemUtils.GetItemById(item.Key);
+
+                if(currentItem.id == 3 || currentItem.id == 4 || currentItem.id == 5)
+                {
+                    if(Utils.HasDataAndStateBelow100(player.setup.inventory.items[item.Key].data))
+                    {
+                        continue;
+                    }
+                }
+
+                if (currentItem.id == 6 || currentItem.id == 1622 || currentItem.id == 1629)
+                {
+                    if (Utils.HasDataAndAmmoNotZero(player.setup.inventory.items[item.Key].data))
+                    {
+                        continue;
+                    }
+                }
+
                 panel.AddTabLine($"{currentItem.itemName}", $"Quantité: {item.Value}", ItemUtils.GetIconIdByItemId(currentItem.id), _ =>
                 {
                     LargeLockerDepositQuantity(player, category, currentItem, item.Value);
