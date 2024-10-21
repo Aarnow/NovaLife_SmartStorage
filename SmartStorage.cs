@@ -379,12 +379,17 @@ namespace SmartStorage
             {
                 Item currentItem = ItemUtils.GetItemById(item.Key);
 
-                if(currentItem.id == 3 || currentItem.id == 4 || currentItem.id == 5)
+                if(currentItem.id == 3 || currentItem.id == 4 || currentItem.id == 5) //pièces mecaniques
                 {
                     continue;
                 }
 
-                if (currentItem.id == 6 || currentItem.id == 1622 || currentItem.id == 1629)
+                if (currentItem.id == 6 || currentItem.id == 1622 || currentItem.id == 1629) //flingues
+                {
+                    continue;
+                }
+
+                if (currentItem.id == 41) //carte kisa
                 {
                     continue;
                 }
