@@ -381,18 +381,12 @@ namespace SmartStorage
 
                 if(currentItem.id == 3 || currentItem.id == 4 || currentItem.id == 5)
                 {
-                    if(Utils.HasDataAndStateBelow100(player.setup.inventory.items[item.Key].data))
-                    {
-                        continue;
-                    }
+                    continue;
                 }
 
                 if (currentItem.id == 6 || currentItem.id == 1622 || currentItem.id == 1629)
                 {
-                    if (Utils.HasDataAndAmmoNotZero(player.setup.inventory.items[item.Key].data))
-                    {
-                        continue;
-                    }
+                    continue;
                 }
 
                 panel.AddTabLine($"{currentItem.itemName}", $"Quantité: {item.Value}", ItemUtils.GetIconIdByItemId(currentItem.id), _ =>
